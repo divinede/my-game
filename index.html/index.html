@@ -5,10 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Catch the Ball Game</title>
   <style>
-    * {
-      box-sizing: border-box;
-    }
-
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
       overflow: hidden;
@@ -21,28 +19,44 @@
       align-items: center;
       justify-content: flex-start;
       height: 100vh;
+      user-select: none;
+      -webkit-user-select: none;
+      -ms-user-select: none;
+    }
+
+    header {
+      width: 100%;
+      max-width: 720px;
+      padding: 10px;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: center;
     }
 
     h1 {
-      margin-top: 10px;
-      font-size: 1.8rem;
+      margin: 0;
+      font-size: 1.6rem;
     }
 
-    #score {
-      font-size: 1.3rem;
-      margin: 5px;
+    .info {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      font-size: 0.95rem;
     }
 
     #gameArea {
       position: relative;
       width: 90%;
       max-width: 600px;
-      height: 60vh;
+      height: min(60vh, 560px);
       background: #222;
       border: 4px solid #fff;
       overflow: hidden;
-      border-radius: 10px;
+      border-radius: 12px;
       margin-top: 10px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.35);
     }
 
     #basket {
@@ -55,25 +69,26 @@
       border-radius: 10px;
       transform: translateX(-50%);
       box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
-      transition: left 0.05s linear;
     }
 
     .ball {
       position: absolute;
       top: 0;
-      width: 25px;
-      height: 25px;
+      width: 28px;
+      height: 28px;
       background: radial-gradient(circle at 30% 30%, #ff4b2b, #ff0000);
       border-radius: 50%;
       box-shadow: 0 0 10px rgba(255, 0, 0, 0.6);
+      will-change: transform;
     }
 
     #controls {
-      margin-top: 15px;
+      margin-top: 12px;
       display: flex;
       justify-content: center;
-      gap: 50px;
+      gap: 40px;
       width: 100%;
+      max-width: 420px;
     }
 
     .btn {
@@ -81,42 +96,54 @@
       color: white;
       border: none;
       border-radius: 50%;
-      width: 70px;
-      height: 70px;
+      width: 64px;
+      height: 64px;
       font-size: 30px;
       box-shadow: 0 4px 8px rgba(0, 0, 0, 0.4);
       cursor: pointer;
       user-select: none;
-      transition: transform 0.1s ease, background 0.3s ease;
+      transition: transform 0.08s ease, background 0.2s ease;
+      touch-action: none;
     }
 
-    .btn:active {
-      transform: scale(0.9);
-      background: #e68900;
+    .btn:active { transform: scale(0.95); background: #e68900; }
+
+    #hud {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    #restart {
+      background: transparent;
+      color: white;
+      border: 1px solid rgba(255,255,255,0.25);
+      padding: 6px 10px;
+      border-radius: 8px;
+      cursor: pointer;
     }
 
     @media (max-width: 600px) {
-      h1 {
-        font-size: 1.5rem;
-      }
-
-      #gameArea {
-        height: 55vh;
-      }
-
-      .btn {
-        width: 60px;
-        height: 60px;
-        font-size: 26px;
-      }
+      h1 { font-size: 1.25rem; }
+      .btn { width: 56px; height: 56px; font-size: 26px; }
+      #gameArea { height: 55vh; }
+      #basket { width: 88px; }
     }
   </style>
 </head>
 <body>
-  <h1>Catch the Ball 🎮</h1>
-  <div id="score">Score: 0</div>
-  <div id="gameArea">
-    <div id="basket"></div>
+  <header>
+    <h1>Catch the Ball 🎮</h1>
+    <div class="info" id="hud">
+      <div id="score">Score: 0</div>
+      <div id="level">Level: 1</div>
+      <div id="highScore">High: 0</div>
+      <button id="restart">Restart</button>
+    </div>
+  </header>
+
+  <div id="gameArea" aria-label="Game area">
+    <div id="basket" role="img" aria-label="Basket"></div>
   </div>
 
   <!-- On-screen controls (for phones) -->
@@ -126,69 +153,232 @@
   </div>
 
   <script>
+    // Elements
     const gameArea = document.getElementById("gameArea");
     const basket = document.getElementById("basket");
     const scoreDisplay = document.getElementById("score");
+    const levelDisplay = document.getElementById("level");
+    const highDisplay = document.getElementById("highScore");
     const leftBtn = document.getElementById("leftBtn");
     const rightBtn = document.getElementById("rightBtn");
+    const restartBtn = document.getElementById("restart");
+
+    // Game state
     let score = 0;
-    let basketX = gameArea.clientWidth / 2 - 50;
-    let moveSpeed = 25;
+    let level = 1;
+    let highScore = parseInt(localStorage.getItem("catchBallHighScore") || "0", 10);
+    highDisplay.textContent = "High: " + highScore;
 
-    // Adjust basket position on resize
-    window.addEventListener("resize", () => {
-      basketX = Math.min(basketX, gameArea.clientWidth - 100);
-      basket.style.left = basketX + "px";
-    });
+    // Basket state
+    let basketX = 0;
+    let basketWidth = 100;
+    let moveSpeed = 12;           // px per movement step
+    let continuousMoveInterval = null;
 
-    // Keyboard control (for laptop)
-    document.addEventListener("keydown", (e) => moveBasket(e.key));
+    // Ball management
+    const balls = new Set();      // holds ball objects: {el, x, y, vy}
+    let lastSpawn = 0;
+    let spawnInterval = 1000;     // ms between spawns (will shrink as level increases)
+    let baseFallSpeed = 2.6;      // base vertical speed (px per frame) - increases with level
 
-    // Touch and click controls (for phone)
-    leftBtn.addEventListener("touchstart", () => moveBasket("ArrowLeft"));
-    rightBtn.addEventListener("touchstart", () => moveBasket("ArrowRight"));
-    leftBtn.addEventListener("mousedown", () => moveBasket("ArrowLeft"));
-    rightBtn.addEventListener("mousedown", () => moveBasket("ArrowRight"));
+    // Timing
+    let lastFrameTime = 0;
+    let running = true;
 
-    function moveBasket(direction) {
-      if (direction === "ArrowLeft" && basketX > 0) {
-        basketX -= moveSpeed;
-      } else if (direction === "ArrowRight" && basketX < gameArea.clientWidth - 100) {
-        basketX += moveSpeed;
+    // Initialize sizes and place basket centered
+    function layout() {
+      basketWidth = Math.max(70, Math.min(120, parseInt(getComputedStyle(basket).width, 10) || 100));
+      // keep basket centered if first time or after resize
+      if (!basket.style.left || basket.style.left === "50%") {
+        basketX = (gameArea.clientWidth / 2) - (basketWidth / 2);
+      } else {
+        basketX = Math.min(basketX, gameArea.clientWidth - basketWidth);
       }
       basket.style.left = basketX + "px";
     }
+    layout();
+    window.addEventListener("resize", layout);
 
-    function createBall() {
-      const ball = document.createElement("div");
-      ball.classList.add("ball");
-      ball.style.left = Math.random() * (gameArea.clientWidth - 25) + "px";
-      gameArea.appendChild(ball);
+    // Utility: random between
+    function rand(min, max) { return Math.random() * (max - min) + min; }
 
-      let fallSpeed = 4 + Math.random() * 2;
-      let fallInterval = setInterval(() => {
-        const ballTop = parseFloat(ball.style.top || 0);
-        if (ballTop > gameArea.clientHeight - 45) {
-          const basketRect = basket.getBoundingClientRect();
-          const ballRect = ball.getBoundingClientRect();
-          if (
-            ballRect.left >= basketRect.left &&
-            ballRect.right <= basketRect.right
-          ) {
-            score++;
-            scoreDisplay.textContent = "Score: " + score;
-          }
-          ball.remove();
-          clearInterval(fallInterval);
-        } else {
-          ball.style.top = ballTop + fallSpeed + "px";
-        }
-      }, 20);
+    // Update displays
+    function updateHUD() {
+      scoreDisplay.textContent = "Score: " + score;
+      levelDisplay.textContent = "Level: " + level;
+      highDisplay.textContent = "High: " + highScore;
     }
 
-    // Drop new ball every 1 second
-    setInterval(createBall, 1000);
+    // Level up logic: every 5 points = next level
+    function checkLevel() {
+      const newLevel = Math.floor(score / 5) + 1;
+      if (newLevel !== level) {
+        level = newLevel;
+        // Increase difficulty: reduce spawn interval and slightly increase base speed
+        spawnInterval = Math.max(300, 1000 - (level - 1) * 120);
+        baseFallSpeed = 2.6 + (level - 1) * 0.6;
+      }
+    }
+
+    // Create a new ball object (not using setInterval for each ball)
+    function spawnBall(now) {
+      const el = document.createElement("div");
+      el.className = "ball";
+      const size = rand(22, 34);
+      el.style.width = size + "px";
+      el.style.height = size + "px";
+      // x position
+      const x = rand(0, gameArea.clientWidth - size);
+      el.style.transform = `translate(${x}px, 0px)`;
+      gameArea.appendChild(el);
+
+      // initial vertical velocity
+      const vy = baseFallSpeed + rand(0, 1.6) + (level - 1) * 0.35;
+      balls.add({ el, x, y: 0, vy, size });
+      lastSpawn = now;
+    }
+
+    // Animation loop using requestAnimationFrame
+    function frame(now) {
+      if (!lastFrameTime) lastFrameTime = now;
+      const dt = Math.min(40, now - lastFrameTime); // cap delta for stability
+      // spawn logic
+      if (now - lastSpawn >= spawnInterval) spawnBall(now);
+
+      // update balls
+      for (const ball of Array.from(balls)) {
+        ball.y += ball.vy * (dt / 16.6667); // normalize to ~60fps units
+        // move element using transform for better performance
+        ball.el.style.transform = `translate(${ball.x}px, ${ball.y}px)`;
+
+        // check if ball reached bottom area
+        if (ball.y + ball.size >= gameArea.clientHeight - 10) {
+          // collision detection (using bounding boxes)
+          const basketRect = basket.getBoundingClientRect();
+          const areaRect = gameArea.getBoundingClientRect();
+          const ballLeft = areaRect.left + ball.x;
+          const ballRight = ballLeft + ball.size;
+
+          if (ballLeft + 2 >= basketRect.left && ballRight - 2 <= basketRect.right) {
+            // caught
+            score += 1;
+            if (score > highScore) {
+              highScore = score;
+              localStorage.setItem("catchBallHighScore", String(highScore));
+            }
+            updateHUD();
+            checkLevel();
+          }
+          // remove ball in either case (caught or missed)
+          ball.el.remove();
+          balls.delete(ball);
+        }
+      }
+
+      lastFrameTime = now;
+      if (running) requestAnimationFrame(frame);
+    }
+
+    // Basket movement (clamped)
+    function setBasketX(x) {
+      basketX = Math.min(Math.max(0, x), gameArea.clientWidth - basketWidth);
+      basket.style.left = basketX + "px";
+    }
+
+    function moveBasket(direction) {
+      if (direction === "left") {
+        setBasketX(basketX - moveSpeed);
+      } else if (direction === "right") {
+        setBasketX(basketX + moveSpeed);
+      }
+    }
+
+    // Keyboard controls
+    const keysDown = {};
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft" || e.key === "Left") { keysDown.left = true; }
+      if (e.key === "ArrowRight" || e.key === "Right") { keysDown.right = true; }
+    });
+    document.addEventListener("keyup", (e) => {
+      if (e.key === "ArrowLeft" || e.key === "Left") { keysDown.left = false; }
+      if (e.key === "ArrowRight" || e.key === "Right") { keysDown.right = false; }
+    });
+
+    // Touch / Mouse controls for on-screen buttons with hold support
+    let holdTimer = null;
+    function startHold(direction) {
+      // immediate move
+      moveBasket(direction);
+      // then continuous
+      holdTimer = setInterval(() => moveBasket(direction), 80);
+    }
+    function stopHold() {
+      clearInterval(holdTimer);
+      holdTimer = null;
+    }
+    // left button
+    leftBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startHold("left"); });
+    leftBtn.addEventListener("mousedown", (e) => { e.preventDefault(); startHold("left"); });
+    // right button
+    rightBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startHold("right"); });
+    rightBtn.addEventListener("mousedown", (e) => { e.preventDefault(); startHold("right"); });
+
+    // stop on release / leave
+    ["mouseup","mouseleave","touchend","touchcancel"].forEach(ev => {
+      leftBtn.addEventListener(ev, stopHold);
+      rightBtn.addEventListener(ev, stopHold);
+    });
+
+    // Restart game
+    function restartGame() {
+      // clear balls
+      for (const b of balls) {
+        try { b.el.remove(); } catch(e) {}
+      }
+      balls.clear();
+      // reset stats
+      score = 0;
+      level = 1;
+      spawnInterval = 1000;
+      baseFallSpeed = 2.6;
+      updateHUD();
+      // center basket
+      basketX = (gameArea.clientWidth / 2) - (basketWidth / 2);
+      basket.style.left = basketX + "px";
+      lastSpawn = 0;
+      lastFrameTime = 0;
+    }
+    restartBtn.addEventListener("click", restartGame);
+
+    // Main update loop (for input & minor per-frame housekeeping)
+    function mainLoop() {
+      // keyboard continuous movement
+      if (keysDown.left) moveBasket("left");
+      if (keysDown.right) moveBasket("right");
+
+      // update HUD occasionally (score/higsh handled elsewhere too)
+      requestAnimationFrame(mainLoop);
+    }
+
+    // Start loops
+    updateHUD();
+    requestAnimationFrame(frame);
+    requestAnimationFrame(mainLoop);
+
+    // Optional: pause when page hidden to save CPU
+    document.addEventListener("visibilitychange", () => {
+      running = document.visibilityState === "visible";
+      if (running) {
+        lastFrameTime = 0;
+        requestAnimationFrame(frame);
+      }
+    });
+
+    // Ensure basket size & position reflect responsive CSS
+    window.addEventListener("load", () => {
+      setTimeout(layout, 20);
+    });
+
   </script>
 </body>
 </html>
-
